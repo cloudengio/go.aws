@@ -113,7 +113,7 @@ func (sc *scanner) Scan(ctx context.Context, n int) bool {
 		return false
 	}
 	if sc.pf != nil {
-		return sc.scanPrefetched(n)
+		return sc.scanPrefetched(ctx, n)
 	}
 	entries, err := sc.list(ctx, n)
 	if err != nil {
@@ -123,7 +123,7 @@ func (sc *scanner) Scan(ctx context.Context, n int) bool {
 	sc.entries = entries
 	sc.read += len(entries)
 	if sc.prefetch > 0 && sc.read >= sc.prefetch && !sc.done {
-		sc.startPrefetch(ctx, n)
+		sc.startPrefetch(n)
 	}
 	return len(entries) != 0
 }
@@ -153,18 +153,18 @@ func (p *pager) list(ctx context.Context, n int) ([]filewalk.Entry, error) {
 
 // startPrefetch lists the remaining pages in the background using
 // a copy of the pager, which the goroutine that does so then owns.
-func (sc *scanner) startPrefetch(ctx context.Context, n int) {
+func (sc *scanner) startPrefetch(n int) {
 	p := sc.pager
 	popn := func(ctx context.Context, items []filewalk.Entry) (int, bool, error) {
 		entries, err := p.list(ctx, len(items))
 		return copy(items, entries), p.done, err
 	}
-	sc.pf = stream.NewScanner(ctx, popn, stream.WithBatchSize(n))
+	sc.pf = stream.NewScanner(popn, stream.WithBatchSize(n))
 }
 
-func (sc *scanner) scanPrefetched(n int) bool {
+func (sc *scanner) scanPrefetched(ctx context.Context, n int) bool {
 	sc.entries = nil
-	for len(sc.entries) < n && sc.pf.Scan() {
+	for len(sc.entries) < n && sc.pf.Scan(ctx) {
 		sc.entries = append(sc.entries, sc.pf.Data())
 	}
 	if len(sc.entries) > 0 {
