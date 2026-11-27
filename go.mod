@@ -6,7 +6,7 @@ require (
 	cloudeng.io/cicd v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/cmdutil v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20261127214422-dc57249ca1db
+	cloudeng.io/file v0.0.0-20261127212505-10ebe293becb
 	cloudeng.io/logging v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
