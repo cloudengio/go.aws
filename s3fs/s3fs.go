@@ -29,6 +29,7 @@ type options struct {
 	s3options s3.Options
 	client    Client
 	scanSize  int
+	prefetch  int
 }
 
 // WithS3Options wraps s3.Options for use when creating an s3.Client.
@@ -56,6 +57,20 @@ func WithScanSize(s int) Option {
 	}
 }
 
+// DefaultPrefetch is the default number of entries that must be listed
+// before the remaining pages of a prefix are prefetched.
+const DefaultPrefetch = 1000
+
+// WithPrefetch configures scanners to list the remaining pages of a prefix in
+// the background, overlapping the requests with the processing of each page,
+// once at least minEntries entries have been listed and more remain. The
+// default is DefaultPrefetch, a value of zero or less disables prefetching.
+func WithPrefetch(minEntries int) Option {
+	return func(o *options) {
+		o.prefetch = minEntries
+	}
+}
+
 // WithDelimiter sets the delimiter to use when listing objects,
 // the default is /.
 func WithDelimiter(d byte) Option {
@@ -80,6 +95,7 @@ func NewS3FS(cfg aws.Config, options ...Option) *T {
 	s3fs := &T{}
 	s3fs.options.delimiter = '/'
 	s3fs.options.scanSize = 1000
+	s3fs.options.prefetch = DefaultPrefetch
 	for _, fn := range options {
 		fn(&s3fs.options)
 	}
