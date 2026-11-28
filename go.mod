@@ -3,10 +3,11 @@ module cloudeng.io/aws
 go 1.27.0
 
 require (
+	cloudeng.io/algo v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/cicd v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/cmdutil v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20261127212505-10ebe293becb
+	cloudeng.io/file v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/logging v0.0.0-20261127214422-dc57249ca1db
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
@@ -30,7 +31,6 @@ require (
 )
 
 require (
-	cloudeng.io/algo v0.0.0-20261127202114-df1e3efcdc1b // indirect
 	cloudeng.io/os v0.0.0-20261127214422-dc57249ca1db // indirect
 	cloudeng.io/sys v0.0.0-20261123235553-076c9b54dc11 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect

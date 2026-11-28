@@ -12,7 +12,7 @@ lint:
 	multimod lint
 
 govuln:
-	multimod  govuln
+	multimod govuln
 
 deps:
 	multimod update

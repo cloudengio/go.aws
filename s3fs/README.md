@@ -8,6 +8,16 @@ Package s3fs implements fs.FS for AWS S3.
 
 Package s3fs implements fs.FS for AWS S3.
 
+## Constants
+### DefaultPrefetch
+```go
+const DefaultPrefetch = 1000
+```
+DefaultPrefetch is the default number of entries that must be listed before
+the remaining pages of a prefix are prefetched.
+
+
+
 ## Functions
 ### Func DirectoryBucketAZ
 ```go
@@ -35,6 +45,8 @@ NewCheckpointOperation returns a checkpoint.Operation that uses the S3.
 ```go
 func NewLevelScanner(client Client, delimiter byte, path string) filewalk.LevelScanner
 ```
+NewLevelScanner returns a filewalk.LevelScanner for the specified path that
+does not prefetch.
 
 
 
@@ -86,6 +98,15 @@ func WithDelimiter(d byte) Option
 ```
 WithDelimiter sets the delimiter to use when listing objects, the default is
 /.
+
+
+```go
+func WithPrefetch(minEntries int) Option
+```
+WithPrefetch configures scanners to list the remaining pages of a prefix in
+the background, overlapping the requests with the processing of each page,
+once at least minEntries entries have been listed and more remain. The
+default is DefaultPrefetch, a value of zero or less disables prefetching.
 
 
 ```go

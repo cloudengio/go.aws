@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"regexp"
 
+	"cloudeng.io/algo/container/stream"
 	"cloudeng.io/file/filewalk"
 	"cloudeng.io/path/cloudpath"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,19 +36,28 @@ func DirectoryBucketAZ(bucket string) string {
 
 var slashDelim = aws.String("/")
 
+// NewLevelScanner returns a filewalk.LevelScanner for the specified path
+// that does not prefetch.
 func NewLevelScanner(client Client, delimiter byte, path string) filewalk.LevelScanner {
+	return newLevelScanner(client, delimiter, path, 0)
+}
+
+func newLevelScanner(client Client, delimiter byte, path string, prefetch int) *scanner {
 	path = ensureIsPrefix(path, delimiter)
 	match := cloudpath.AWSS3MatcherSep(path, delimiter)
 	if len(match.Matched) == 0 {
 		return &scanner{err: fmt.Errorf("invalid s3 path: %v", path)}
 	}
 	sc := &scanner{
-		client:    client,
-		match:     match,
-		bucket:    aws.String(match.Volume),
-		prefix:    aws.String(match.Key),
-		delim:     aws.String(string(delimiter)),
-		delimByte: delimiter,
+		pager: pager{
+			client:    client,
+			bucket:    aws.String(match.Volume),
+			prefix:    aws.String(match.Key),
+			delim:     aws.String(string(delimiter)),
+			delimByte: delimiter,
+		},
+		match:    match,
+		prefetch: prefetch,
 	}
 	if IsDirectoryBucket(match.Volume) {
 		sc.delim = slashDelim
@@ -56,19 +66,28 @@ func NewLevelScanner(client Client, delimiter byte, path string) filewalk.LevelS
 }
 
 func (fs *T) LevelScanner(prefix string) filewalk.LevelScanner {
-	return NewLevelScanner(fs.client, fs.options.delimiter, prefix)
+	return newLevelScanner(fs.client, fs.options.delimiter, prefix, fs.options.prefetch)
+}
+
+// pager lists the pages of a single prefix.
+type pager struct {
+	client         Client
+	bucket, prefix *string
+	delim          *string
+	delimByte      byte
+	token          *string
+	done           bool
 }
 
 type scanner struct {
-	client            Client
-	match             cloudpath.Match
-	entries           []filewalk.Entry
-	bucket, prefix    *string
-	done              bool
-	continuationToken *string
-	delim             *string
-	delimByte         byte
-	err               error
+	pager
+	match    cloudpath.Match
+	entries  []filewalk.Entry
+	err      error
+	closed   bool
+	prefetch int // see WithPrefetch.
+	read     int // entries read so far.
+	pf       *stream.Scanner[filewalk.Entry]
 }
 
 func (sc *scanner) Contents() []filewalk.Entry {
@@ -79,31 +98,81 @@ func (sc *scanner) Err() error {
 	return sc.err
 }
 
+// Close stops any prefetching.
+func (sc *scanner) Close() error {
+	sc.closed = true
+	if sc.pf != nil {
+		_ = sc.pf.Close()
+		sc.pf = nil
+	}
+	return nil
+}
+
 func (sc *scanner) Scan(ctx context.Context, n int) bool {
-	if sc.err != nil || sc.done {
+	if sc.err != nil || sc.done || sc.closed {
 		return false
 	}
-	req := s3.ListObjectsV2Input{
-		Bucket:            sc.bucket,
-		Prefix:            sc.prefix,
-		ContinuationToken: sc.continuationToken,
-		Delimiter:         sc.delim,
-		MaxKeys:           aws.Int32(int32(n)),
+	if sc.pf != nil {
+		return sc.scanPrefetched(ctx, n)
 	}
-	obj, err := sc.client.ListObjectsV2(ctx, &req)
+	entries, err := sc.list(ctx, n)
 	if err != nil {
 		sc.err = err
 		return false
 	}
-
-	if !*obj.IsTruncated {
-		// This is the last response for this directory, save the
-		// results and return false on the next call to Scan.
-		sc.done = true
+	sc.entries = entries
+	sc.read += len(entries)
+	if sc.prefetch > 0 && sc.read >= sc.prefetch && !sc.done {
+		sc.startPrefetch(n)
 	}
-	sc.continuationToken = obj.NextContinuationToken
-	sc.entries = convertListObjectsOutput(obj, sc.delimByte)
-	return len(sc.entries) != 0
+	return len(entries) != 0
+}
+
+// list returns the next non-empty page of up to n entries, or no entries
+// once the listing is complete, which is also recorded in p.done.
+func (p *pager) list(ctx context.Context, n int) ([]filewalk.Entry, error) {
+	for {
+		req := s3.ListObjectsV2Input{
+			Bucket:            p.bucket,
+			Prefix:            p.prefix,
+			ContinuationToken: p.token,
+			Delimiter:         p.delim,
+			MaxKeys:           aws.Int32(int32(n)), //nolint:gosec // n is a page size.
+		}
+		obj, err := p.client.ListObjectsV2(ctx, &req)
+		if err != nil {
+			return nil, err
+		}
+		p.done = !aws.ToBool(obj.IsTruncated)
+		p.token = obj.NextContinuationToken
+		if entries := convertListObjectsOutput(obj, p.delimByte); len(entries) > 0 || p.done {
+			return entries, nil
+		}
+	}
+}
+
+// startPrefetch lists the remaining pages in the background using
+// a copy of the pager, which the goroutine that does so then owns.
+func (sc *scanner) startPrefetch(n int) {
+	p := sc.pager
+	popn := func(ctx context.Context, items []filewalk.Entry) (int, bool, error) {
+		entries, err := p.list(ctx, len(items))
+		return copy(items, entries), p.done, err
+	}
+	sc.pf = stream.NewScanner(popn, stream.WithBatchSize(n))
+}
+
+func (sc *scanner) scanPrefetched(ctx context.Context, n int) bool {
+	sc.entries = nil
+	for len(sc.entries) < n && sc.pf.Scan(ctx) {
+		sc.entries = append(sc.entries, sc.pf.Data())
+	}
+	if len(sc.entries) > 0 {
+		return true
+	}
+	sc.err = sc.pf.Err()
+	_ = sc.Close()
+	return false
 }
 
 func convertListObjectsOutput(lo *s3.ListObjectsV2Output, delim byte) []filewalk.Entry {
